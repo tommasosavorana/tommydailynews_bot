@@ -217,23 +217,27 @@ def main():
     telegram_send_message(f"<b>Daily News Briefing</b>\n<i>Compiled: {date_str} (UTC)</i>")
 
     for category, urls in FEEDS.items():
-        all_entries = []
-        for feed_url in urls:
-    try:
-        d = feedparser.parse(feed_url)
-        for e in (d.entries or []):
-            e._feed_url = feed_url  # attach source
-            all_entries.append(e)
-    except Exception:
-        continue
+    all_entries = []
 
-        chosen = pick_top(all_entries)
-        if not chosen:
-            telegram_send_message(f"<b>{category}</b>\n\nNo items found in the last {LOOKBACK_HOURS}h. (We can fix sources.)")
-        else:
-            telegram_send_message(build_category_message(category, chosen))
+    for feed_url in urls:
+        try:
+            d = feedparser.parse(feed_url)
+            for e in (d.entries or []):
+                e._feed_url = feed_url  # attach source
+                all_entries.append(e)
+        except Exception:
+            continue
 
-        time.sleep(2)
+    chosen = pick_top(all_entries)
+
+    if not chosen:
+        telegram_send_message(
+            f"<b>{category}</b>\n\nNo items found in the last {LOOKBACK_HOURS}h."
+        )
+    else:
+        telegram_send_message(build_category_message(category, chosen))
+
+    time.sleep(2)
 
 if __name__ == "__main__":
     main()
