@@ -3,6 +3,7 @@ import time
 import requests
 import feedparser
 import html
+from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as dateparser
 
@@ -121,7 +122,11 @@ def build_category_message(category, chosen_entries):
     return "\n".join(lines).strip()
 
 def main():
-    # Header
+    now_rome = datetime.now(ZoneInfo("Europe/Rome"))
+    if not (now_rome.hour == 8 and now_rome.minute == 0):
+        print(f"Skipping run: local time in Rome is {now_rome.isoformat()}")
+        return
+
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     telegram_send_message(f"<b>Daily News Briefing</b>\n<i>Compiled: {date_str} (UTC)</i>")
 
