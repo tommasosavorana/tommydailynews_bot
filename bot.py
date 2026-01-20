@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import feedparser
+import html
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as dateparser
 
@@ -47,10 +48,11 @@ FEEDS = {
 def telegram_send_message(text: str):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
-        "chat_id": TARGET,
-        "text": text,
-        "disable_web_page_preview": False,
-    }
+    "chat_id": TARGET,
+    "text": text,
+    "parse_mode": "HTML",
+    "disable_web_page_preview": False,
+}
     r = requests.post(url, data=payload, timeout=30)
     r.raise_for_status()
 
@@ -101,6 +103,10 @@ def make_summary(entry):
 
     if len(summary) > 320:
         summary = summary[:320].rsplit(" ", 1)[0] + "..."
+
+    # IMPORTANT: escape any HTML coming from feeds
+    title = html.escape(title)
+    summary = html.escape(summary)
 
     return title, summary, link
 
