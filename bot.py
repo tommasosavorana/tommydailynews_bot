@@ -208,36 +208,39 @@ def title_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 def main():
+    # Run only at 08:00 Europe/Rome (handles DST correctly)
     now_rome = datetime.now(ZoneInfo("Europe/Rome"))
     if not (now_rome.hour == 8 and now_rome.minute == 0):
         print(f"Skipping run: local time in Rome is {now_rome.isoformat()}")
         return
 
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    telegram_send_message(f"<b>Daily News Briefing</b>\n<i>Compiled: {date_str} (UTC)</i>")
+    telegram_send_message(
+        f"<b>Daily News Briefing</b>\n<i>Compiled: {date_str} (UTC)</i>"
+    )
 
     for category, urls in FEEDS.items():
-    all_entries = []
+        all_entries = []
 
-    for feed_url in urls:
-        try:
-            d = feedparser.parse(feed_url)
-            for e in (d.entries or []):
-                e._feed_url = feed_url  # attach source
-                all_entries.append(e)
-        except Exception:
-            continue
+        for feed_url in urls:
+            try:
+                d = feedparser.parse(feed_url)
+                for e in (d.entries or []):
+                    e._feed_url = feed_url  # attach source
+                    all_entries.append(e)
+            except Exception:
+                continue
 
-    chosen = pick_top(all_entries)
+        chosen = pick_top(all_entries)
 
-    if not chosen:
-        telegram_send_message(
-            f"<b>{category}</b>\n\nNo items found in the last {LOOKBACK_HOURS}h."
-        )
-    else:
-        telegram_send_message(build_category_message(category, chosen))
+        if not chosen:
+            telegram_send_message(
+                f"<b>{category}</b>\n\nNo items found in the last {LOOKBACK_HOURS}h."
+            )
+        else:
+            telegram_send_message(build_category_message(category, chosen))
 
-    time.sleep(2)
+        time.sleep(2)
 
 if __name__ == "__main__":
     main()
