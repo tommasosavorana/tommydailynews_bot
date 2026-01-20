@@ -49,7 +49,6 @@ def telegram_send_message(text: str):
     payload = {
         "chat_id": TARGET,
         "text": text,
-        "parse_mode": "HTML",
         "disable_web_page_preview": False,
     }
     r = requests.post(url, data=payload, timeout=30)
