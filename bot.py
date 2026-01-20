@@ -3,6 +3,8 @@ import time
 import requests
 import feedparser
 import html
+import re
+from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as dateparser
@@ -25,11 +27,15 @@ FEEDS = {
         "https://www.repubblica.it/rss/homepage/rss2.0.xml",
         "https://www.lastampa.it/rss.xml",
     ],
-    "Luxury Fashion": [
-        "https://www.voguebusiness.com/rss",
-        "https://fashionunited.com/rss/news",
-        "https://www.highsnobiety.com/feed/",
-    ],
+   "Luxury Fashion": [
+    "https://www.voguebusiness.com/rss",
+    "https://fashionunited.com/rss/news",
+    "https://www.highsnobiety.com/feed/",
+    "https://hypebeast.com/fashion/feed",  # Hypebeast Fashion RSS :contentReference[oaicite:0]{index=0}
+    "https://fashionnetwork.com/rss.xml",
+    "https://www.thefashionlaw.com/feed/",
+    "https://www.vogue.com/feed/rss",      # Vogue (non Vogue Business) :contentReference[oaicite:1]{index=1}
+],
     "Electronic Music": [
         "https://ra.co/rss/news",
         "https://mixmag.net/rss",
@@ -40,11 +46,22 @@ FEEDS = {
         "https://www.artnews.com/c/art-news/news/feed/",
         "https://www.artforum.com/feed/",
     ],
-    "Business & Tech": [
-        "https://www.theverge.com/rss/index.xml",
-        "https://www.wired.com/feed/rss",
-    ],
+    "Business & Tech (AI focus)": [
+    "https://techcrunch.com/feed/",              # TechCrunch main feed :contentReference[oaicite:2]{index=2}
+    "https://www.theverge.com/rss/index.xml",
+    "https://www.wired.com/feed/rss",
+    "https://news.ycombinator.com/rss",          # HN (segnali trend)
+    "https://news.mit.edu/rss",                  # MIT News RSS :contentReference[oaicite:3]{index=3}
+],
 }
+
+TIER1_KEYWORDS = [
+    "voguebusiness.com",
+    "vogue.com",
+    "wwd.com",
+    "businessoffashion.com",
+    "highsnobiety.com",
+]
 
 def telegram_send_message(text: str):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -75,23 +92,73 @@ def clean(s: str) -> str:
 
 def pick_top(entries):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
-    recent = [e for e in entries if safe_dt(e) >= cutoff]
-    recent.sort(key=lambda e: safe_dt(e), reverse=True)
 
-    seen = set()
-    picked = []
-    for e in recent:
+    # 1) filter recent + valid title/link
+    candidates = []
+    for e in entries:
         title = clean(getattr(e, "title", ""))
         link = clean(getattr(e, "link", ""))
         if not title or not link:
             continue
-        key = title.lower()
-        if key in seen:
+        if safe_dt(e) < cutoff:
             continue
-        seen.add(key)
-        picked.append(e)
+        candidates.append(e)
+
+    # 2) build clusters of similar titles (same story across sources)
+    clusters = []  # each: {"key": norm_title, "items": [entry,...]}
+    for e in candidates:
+        nt = normalize_title(getattr(e, "title", ""))
+        placed = False
+        for c in clusters:
+            if title_similarity(nt, c["key"]) >= 0.86:
+                c["items"].append(e)
+                placed = True
+                break
+        if not placed:
+            clusters.append({"key": nt, "items": [e]})
+
+    # 3) score clusters: cross-source + tier + recency
+    scored = []
+    now = datetime.now(timezone.utc)
+
+    for c in clusters:
+        items = c["items"]
+
+        # unique sources (by feed url)
+        sources = set(getattr(x, "_feed_url", "") for x in items)
+
+        # tier score: count tier1 sources inside the cluster
+        tier1_count = sum(1 for s in sources if s and is_tier1(s))
+
+        # recency: newest item in cluster
+        newest_dt = max(safe_dt(x) for x in items)
+        age_hours = max(0.0, (now - newest_dt).total_seconds() / 3600.0)
+        recency_score = max(0.0, 30.0 - age_hours)  # 0..30
+
+        # importance score (tuneable)
+        cross_source_score = len(sources) * 10.0
+        tier_score = tier1_count * 4.0
+
+        score = cross_source_score + tier_score + recency_score
+        scored.append((score, newest_dt, c))
+
+    # 4) pick top clusters, and inside each cluster pick best representative
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+    picked = []
+    for score, newest_dt, c in scored:
+        # representative: prefer tier1 item; otherwise newest
+        items = c["items"]
+        tier1_items = [x for x in items if is_tier1(getattr(x, "_feed_url", ""))]
+        if tier1_items:
+            rep = max(tier1_items, key=lambda x: safe_dt(x))
+        else:
+            rep = max(items, key=lambda x: safe_dt(x))
+
+        picked.append(rep)
         if len(picked) >= MAX_PER_CATEGORY:
             break
+
     return picked
 
 def make_summary(entry):
@@ -121,6 +188,25 @@ def build_category_message(category, chosen_entries):
         lines.append("")
     return "\n".join(lines).strip()
 
+def domain_from_url(u: str) -> str:
+    u = (u or "").lower()
+    u = re.sub(r"^https?://", "", u)
+    return u.split("/")[0]
+
+def is_tier1(feed_url: str) -> bool:
+    d = domain_from_url(feed_url)
+    return any(k in d for k in TIER1_KEYWORDS)
+
+def normalize_title(t: str) -> str:
+    t = (t or "").lower()
+    t = re.sub(r"<[^>]+>", " ", t)         # strip html tags if any
+    t = re.sub(r"[^a-z0-9\s]", " ", t)     # keep alnum
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+def title_similarity(a: str, b: str) -> float:
+    return SequenceMatcher(None, a, b).ratio()
+
 def main():
     now_rome = datetime.now(ZoneInfo("Europe/Rome"))
     if not (now_rome.hour == 8 and now_rome.minute == 0):
@@ -132,12 +218,14 @@ def main():
 
     for category, urls in FEEDS.items():
         all_entries = []
-        for url in urls:
-            try:
-                d = feedparser.parse(url)
-                all_entries.extend(d.entries or [])
-            except Exception:
-                continue
+        for feed_url in urls:
+    try:
+        d = feedparser.parse(feed_url)
+        for e in (d.entries or []):
+            e._feed_url = feed_url  # attach source
+            all_entries.append(e)
+    except Exception:
+        continue
 
         chosen = pick_top(all_entries)
         if not chosen:
