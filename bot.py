@@ -209,9 +209,11 @@ def title_similarity(a: str, b: str) -> float:
 
 def main():
     now_rome = datetime.now(ZoneInfo("Europe/Rome"))
+    print("TEST RUN - Rome time:", now_rome.isoformat())
+    
     # Allow a 15-minute window around 08:00
     if not (now_rome.hour == 8 and 0 <= now_rome.minute <= 15):
-        print(f"Skipping run: local time in Rome is {now_rome.isoformat()}")
+        print("Skipping send (outside window)")
         return
 
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
